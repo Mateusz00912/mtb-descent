@@ -1,0 +1,82 @@
+name: Build APK and EXE
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Capacitor project
+        run: |
+          npm init -y
+          npm i @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6
+          mkdir www
+          cp index.html www/index.html
+          npx cap init "MTB Descent" com.mtbdescent.game --web-dir www
+          npx cap add android
+          sed -i 's/<activity/<activity android:screenOrientation="sensorLandscape"/' android/app/src/main/AndroidManifest.xml
+          npx cap sync android
+      - name: Build APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Electron project
+        run: |
+          mkdir app
+          cp index.html app/index.html
+          cd app
+          cat > main.js <<'JS'
+          const {app,BrowserWindow}=require('electron');
+          app.commandLine.appendSwitch('autoplay-policy','no-user-gesture-required');
+          app.whenReady().then(()=>{const w=new BrowserWindow({width:1280,height:720,fullscreen:true,autoHideMenuBar:true,backgroundColor:'#0e1422'});w.loadFile('index.html');w.webContents.on('before-input-event',(e,i)=>{if(i.type==='keyDown'&&i.key==='F11')w.setFullScreen(!w.isFullScreen())})});
+          app.on('window-all-closed',()=>app.quit());
+          JS
+          cat > package.json <<'JS'
+          {"name":"mtb-descent","version":"1.0.0","description":"MTB Descent","author":"MTB","main":"main.js","devDependencies":{"electron":"31.7.7","electron-builder":"24.13.3"},"build":{"appId":"com.mtbdescent.game","productName":"MTB Descent","win":{"target":"portable"},"files":["main.js","index.html"]}}
+          JS
+          npm install
+          npx electron-builder --win portable --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: exe
+          path: app/dist/*.exe
+  release:
+    needs: [android, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: MTB Descent v${{ github.run_number }}
+          files: |
+            out/apk/app-debug.apk
+            out/exe/*.exe
